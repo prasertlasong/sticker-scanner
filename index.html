@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>สแกนสติกเกอร์ผู้ป่วย</title>
+<style>
+:root{
+  --primary:#2CA98F; --primary-dark:#1F7A68; --primary-light:#E4F4F0;
+  --bg:#F7FAF9; --card:#FFFFFF; --ink:#16211E; --muted:#6B7A76; --line:#E1E9E6; --danger:#D64545;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1614; --card:#17201D; --ink:#EAF2EF; --muted:#93A29D; --line:#26332F; --primary-light:#173028;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1614; --card:#17201D; --ink:#EAF2EF; --muted:#93A29D; --line:#26332F; --primary-light:#173028;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+*{box-sizing:border-box;}
+body{
+  margin:0; min-height:100%; background:var(--bg); color:var(--ink);
+  font-family:'Sarabun',-apple-system,'Noto Sans Thai',system-ui,sans-serif;
+  display:flex; flex-direction:column; align-items:center;
+}
+.wrap{width:100%; max-width:460px; padding:18px 16px 28px;}
+h1{font-size:19px; margin:2px 0 4px; display:flex; align-items:center; gap:8px;}
+.sub{font-size:13px; color:var(--muted); margin:0 0 16px; line-height:1.5;}
+.stage{
+  background:#000; border-radius:16px; overflow:hidden; position:relative;
+  aspect-ratio:3/4; display:flex; align-items:center; justify-content:center;
+}
+.stage video, .stage canvas, .stage img{width:100%; height:100%; object-fit:cover; display:block;}
+.frame{position:absolute; inset:16% 7%; border:2.5px dashed rgba(255,255,255,.85); border-radius:12px; pointer-events:none;}
+.state-msg{color:#fff; font-size:14px; text-align:center; padding:0 24px; line-height:1.6;}
+.spinner{width:34px; height:34px; border:3px solid rgba(255,255,255,.25); border-top-color:#fff; border-radius:50%; animation:sp .7s linear infinite; margin:0 auto 12px;}
+@keyframes sp{to{transform:rotate(360deg);}}
+.btn{
+  width:100%; padding:14px; border:none; border-radius:12px; font-size:15px; font-weight:700;
+  cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-top:12px;
+}
+.btn-primary{background:var(--primary); color:#fff;}
+.btn-outline{background:var(--card); color:var(--ink); border:1.5px solid var(--line);}
+.card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:14px;}
+.field{margin-bottom:12px;}
+.field:last-child{margin-bottom:0;}
+label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; font-weight:600;}
+.row{display:flex; gap:8px;}
+.input{
+  flex:1; width:100%; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px;
+  font-size:15px; background:var(--bg); color:var(--ink); font-family:inherit;
+}
+.copy-btn{
+  padding:0 14px; border-radius:10px; border:1.5px solid var(--primary); background:var(--primary-light);
+  color:var(--primary-dark); font-weight:700; font-size:13px; white-space:nowrap; cursor:pointer;
+}
+.copy-btn.copied{background:var(--primary); color:#fff; border-color:var(--primary);}
+.note{font-size:12px; color:var(--muted); line-height:1.6; margin-top:14px; display:flex; gap:7px;}
+.err{color:var(--danger); font-size:13px; margin-top:10px; line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📷 สแกนสติกเกอร์ผู้ป่วย</h1>
+  <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
+
+  <div class="stage" id="stage">
+    <div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>
+  </div>
+
+  <div id="controls"></div>
+  <div id="resultCard"></div>
+
+  <p class="note">🔒 ภาพและข้อมูลประมวลผลอยู่ในเครื่องของคุณเท่านั้น ไม่ถูกส่งหรือเก็บไว้ที่เซิร์ฟเวอร์ใด ๆ</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+<script>
+let stream = null;
+const stage = document.getElementById('stage');
+const controls = document.getElementById('controls');
+const resultCard = document.getElementById('resultCard');
+
+function setControls(html){ controls.innerHTML = html; }
+function setResult(html){ resultCard.innerHTML = html; }
+
+async function startCamera(){
+  setResult('');
+  stage.innerHTML = '<div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>';
+  setControls('');
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ ideal:'environment' }, width:{ideal:1280}, height:{ideal:1280} }, audio:false
+    });
+    stage.innerHTML = '<video id="video" playsinline autoplay muted></video><div class="frame"></div>';
+    const v = document.getElementById('video');
+    v.srcObject = stream;
+    await v.play().catch(()=>{});
+    setControls('<button class="btn btn-primary" id="btnShoot">📷 ถ่ายภาพ</button>');
+    document.getElementById('btnShoot').onclick = capture;
+  }catch(e){
+    console.warn('camera error', e);
+    stage.innerHTML = '<div class="state-msg">ไม่สามารถเปิดกล้องได้<br><span style="font-size:12.5px;opacity:.8">กรุณาอนุญาตการใช้กล้องเมื่อเบราว์เซอร์ถาม หรือตรวจสอบสิทธิ์กล้องในตั้งค่าเบราว์เซอร์</span></div>';
+    setControls('<button class="btn btn-primary" id="btnRetry">ลองเปิดกล้องอีกครั้ง</button>');
+    document.getElementById('btnRetry').onclick = startCamera;
+  }
+}
+
+function stopCamera(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+}
+
+function capture(){
+  const v = document.getElementById('video');
+  if(!v || !v.videoWidth) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+  canvas.getContext('2d').drawImage(v,0,0);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  stopCamera();
+  stage.innerHTML = '<img src="'+dataUrl+'">';
+  setControls('<div class="state-msg" style="color:var(--ink);padding:14px 0 4px;"><div class="spinner" style="border-color:var(--line);border-top-color:var(--primary);"></div>กำลังอ่านข้อมูล...</div>');
+  readSticker(dataUrl);
+}
+
+async function readSticker(dataUrl){
+  try{
+    const { data } = await Tesseract.recognize(dataUrl, 'tha+eng');
+    const parsed = parseStickerText(data && data.text || '');
+    showResult(parsed);
+  }catch(e){
+    console.warn('ocr error', e);
+    setControls('<div class="err">อ่านข้อมูลจากภาพไม่สำเร็จ กรุณาลองถ่ายใหม่ให้ชัดขึ้น</div><button class="btn btn-outline" id="btnRetry2">ถ่ายใหม่</button>');
+    document.getElementById('btnRetry2').onclick = startCamera;
+  }
+}
+
+function parseStickerText(raw){
+  const lines = String(raw||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  let hn = '';
+  for(const line of lines){
+    const tokens = line.split(/\s+/).map(t=>t.replace(/[^\d]/g,'')).filter(t=>t.length>=6);
+    if(tokens.length){ hn = tokens[0]; break; }
+  }
+  const titleRe = /(นางสาว|น\.ส\.|นาย|นาง|ด\.?ช\.?|ด\.?ญ\.?|คุณ|พระ|สามเณร|แม่ชี)/;
+  let name = '';
+  for(const line of lines){
+    if(titleRe.test(line) && /[ก-๙]/.test(line)){
+      name = line.replace(/[^\u0E01-\u0E4F\s.]/g,'').replace(/\s+/g,' ').trim();
+      if(name) break;
+    }
+  }
+  return { hn, name };
+}
+
+function copyField(id, btn){
+  const el = document.getElementById(id);
+  const text = el.value;
+  const done = ()=>{
+    btn.textContent = 'คัดลอกแล้ว ✓';
+    btn.classList.add('copied');
+    setTimeout(()=>{ btn.textContent = 'คัดลอก'; btn.classList.remove('copied'); }, 1500);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>{ el.select(); document.execCommand('copy'); done(); });
+  }else{
+    el.select(); document.execCommand('copy'); done();
+  }
+}
+
+function showResult(r){
+  setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
+  document.getElementById('btnRetry3').onclick = startCamera;
+  setResult(`
+    <div class="card">
+      <div class="field">
+        <label>HN</label>
+        <div class="row">
+          <input class="input" id="outHN" value="${escapeHtml(r.hn)}" inputmode="numeric" placeholder="ไม่พบเลข HN กรุณาพิมพ์เอง">
+          <button class="copy-btn" id="copyHN">คัดลอก</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>ชื่อ-นามสกุล</label>
+        <div class="row">
+          <input class="input" id="outName" value="${escapeHtml(r.name)}" placeholder="ไม่พบชื่อ กรุณาพิมพ์เอง">
+          <button class="copy-btn" id="copyName">คัดลอก</button>
+        </div>
+      </div>
+    </div>
+    <p class="note">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>
+  `);
+  document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
+  document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
+}
+
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+startCamera();
+</script>
+</body>
+</html>
