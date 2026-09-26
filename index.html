@@ -249,6 +249,21 @@ document.getElementById('btnOpenCam').onclick = startCamera;
     }).catch(e=>{ el.innerHTML += '<br>เช็คสถานะสิทธิ์กล้องไม่ได้: ' + e.message; });
   }
   el.innerHTML = parts.join('<br>');
+
+  // เช็คว่าเบราว์เซอร์มองเห็น "อุปกรณ์กล้อง" จริงหรือไม่ (คนละเรื่องกับสิทธิ์การใช้งาน)
+  // หมายเหตุ: ก่อนที่ผู้ใช้จะอนุญาตกล้องครั้งแรก ป้ายชื่ออุปกรณ์ (label) มักจะว่างเปล่าตามมาตรฐานความเป็นส่วนตัวของเบราว์เซอร์ แต่จำนวนอุปกรณ์ videoinput จะยังนับได้ถูกต้อง
+  if(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices){
+    navigator.mediaDevices.enumerateDevices().then(list=>{
+      const cams = list.filter(d=>d.kind==='videoinput');
+      let msg = '<br>จำนวนอุปกรณ์กล้องที่เบราว์เซอร์มองเห็น: ' + cams.length;
+      if(cams.length===0){
+        msg += ' <span style="color:var(--danger,#D64545)">❌ เบราว์เซอร์นี้ไม่พบกล้องเลยแม้แต่ตัวเดียว — แปลว่าปัญหาไม่ได้อยู่ที่สิทธิ์เว็บ แต่กล้องถูกซ่อนไว้ที่ระดับระบบปฏิบัติการ/เบราว์เซอร์ หรือเครื่องนี้ไม่มีกล้อง</span>';
+      } else {
+        msg += cams.map((c,i)=>'<br>&nbsp;&nbsp;- กล้อง #'+(i+1)+': '+(c.label || '(ยังไม่มีชื่อ จนกว่าจะอนุญาตสิทธิ์)')).join('');
+      }
+      el.innerHTML += msg;
+    }).catch(e=>{ el.innerHTML += '<br>เช็ครายชื่ออุปกรณ์กล้องไม่ได้: ' + e.message; });
+  }
 })();
 </script>
 </body>
