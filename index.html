@@ -68,10 +68,10 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
   <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
 
   <div class="stage" id="stage">
-    <div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>
+    <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
   </div>
 
-  <div id="controls"></div>
+  <div id="controls"><button class="btn btn-primary" id="btnOpenCam">📷 แตะเพื่อเปิดกล้อง</button></div>
   <div id="resultCard"></div>
 
   <p class="note">🔒 ภาพและข้อมูลประมวลผลอยู่ในเครื่องของคุณเท่านั้น ไม่ถูกส่งหรือเก็บไว้ที่เซิร์ฟเวอร์ใด ๆ</p>
@@ -87,14 +87,29 @@ const resultCard = document.getElementById('resultCard');
 function setControls(html){ controls.innerHTML = html; }
 function setResult(html){ resultCard.innerHTML = html; }
 
+async function tryGetStream(constraintsList){
+  let lastErr = null;
+  for(const c of constraintsList){
+    try{ return await navigator.mediaDevices.getUserMedia(c); }
+    catch(e){ lastErr = e; console.warn('constraint failed', JSON.stringify(c), e.name, e.message); }
+  }
+  throw lastErr;
+}
 async function startCamera(){
   setResult('');
   stage.innerHTML = '<div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>';
   setControls('');
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    stage.innerHTML = '<div class="state-msg">เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง (navigator.mediaDevices ไม่พร้อมใช้งาน)<br><span style="font-size:12px;opacity:.8">ลองเปิดผ่าน Chrome หรือ Safari เวอร์ชันล่าสุดโดยตรง ไม่ใช่ผ่านแอปอื่นที่ฝังเบราว์เซอร์ไว้ข้างใน</span></div>';
+    return;
+  }
   try{
-    stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:{ ideal:'environment' }, width:{ideal:1280}, height:{ideal:1280} }, audio:false
-    });
+    // ไล่ลองเงื่อนไขจากเข้มงวด -> ยืดหยุ่นที่สุด เผื่อกล้อง/เบราว์เซอร์บางรุ่นปฏิเสธเงื่อนไขที่ระบุละเอียดเกินไป
+    stream = await tryGetStream([
+      { video:{ facingMode:{ exact:'environment' } }, audio:false },
+      { video:{ facingMode:'environment' }, audio:false },
+      { video:true, audio:false }
+    ]);
     stage.innerHTML = '<video id="video" playsinline autoplay muted></video><div class="frame"></div>';
     const v = document.getElementById('video');
     v.srcObject = stream;
@@ -102,8 +117,16 @@ async function startCamera(){
     setControls('<button class="btn btn-primary" id="btnShoot">📷 ถ่ายภาพ</button>');
     document.getElementById('btnShoot').onclick = capture;
   }catch(e){
-    console.warn('camera error', e);
-    stage.innerHTML = '<div class="state-msg">ไม่สามารถเปิดกล้องได้<br><span style="font-size:12.5px;opacity:.8">กรุณาอนุญาตการใช้กล้องเมื่อเบราว์เซอร์ถาม หรือตรวจสอบสิทธิ์กล้องในตั้งค่าเบราว์เซอร์</span></div>';
+    console.warn('camera error', e && e.name, e && e.message, e);
+    const known = {
+      NotAllowedError: 'เบราว์เซอร์/ระบบปฏิเสธคำขอใช้กล้อง (สิทธิ์ถูกบล็อก)',
+      NotFoundError: 'ไม่พบอุปกรณ์กล้องในเครื่องนี้',
+      NotReadableError: 'กล้องถูกใช้งานโดยแอปอื่นอยู่ ลองปิดแอปกล้อง/แอปวิดีโอคอลอื่นก่อน',
+      OverconstrainedError: 'เงื่อนไขกล้องที่ขอไม่ตรงกับที่เครื่องรองรับ',
+      SecurityError: 'หน้านี้ไม่ได้อยู่ในบริบทที่ปลอดภัยพอสำหรับการใช้กล้อง (ต้องเป็น HTTPS)'
+    };
+    const label = (e && known[e.name]) || ((e && e.name) ? ('เกิดข้อผิดพลาด: '+e.name) : 'ไม่ทราบสาเหตุ');
+    stage.innerHTML = '<div class="state-msg">ไม่สามารถเปิดกล้องได้<br><span style="font-size:12.5px;opacity:.85">'+label+'</span><br><span style="font-size:11px;opacity:.6">'+((e&&e.message)||'')+'</span></div>';
     setControls('<button class="btn btn-primary" id="btnRetry">ลองเปิดกล้องอีกครั้ง</button>');
     document.getElementById('btnRetry').onclick = startCamera;
   }
@@ -201,7 +224,7 @@ function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-startCamera();
+document.getElementById('btnOpenCam').onclick = startCamera;
 </script>
 </body>
 </html>
