@@ -79,6 +79,7 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
 <div class="wrap">
   <h1>📷 สแกนสติกเกอร์ผู้ป่วย</h1>
   <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ ระบบ OCR อาจอ่านผิดเพี้ยนได้บ้าง โดยเฉพาะฟอนต์จากเครื่องพิมพ์ป้าย จึงจะมีหน้าตรวจสอบให้แก้ไขก่อนยืนยันเสมอ</p>
+  <p id="diag" style="font-size:11.5px; color:var(--muted); background:var(--primary-light); padding:8px 10px; border-radius:8px; line-height:1.6;"></p>
 
   <div class="stage" id="stage">
     <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
@@ -320,6 +321,30 @@ function escapeHtml(s){
 }
 
 document.getElementById('btnOpenCam').onclick = startCamera;
+
+// วินิจฉัยว่ามีนโยบาย Permissions-Policy ของเบราว์เซอร์/โฮสต์ ปิดกั้นกล้องไว้ที่ระดับเอกสารหรือไม่ (คนละชั้นกับสิทธิ์ที่ผู้ใช้กด)
+(function diagnose(){
+  const el = document.getElementById('diag');
+  const parts = [];
+  parts.push('URL: ' + location.protocol + '//' + location.host);
+  parts.push('มี mediaDevices: ' + (navigator.mediaDevices ? 'มี' : 'ไม่มี'));
+  try{
+    if(document.featurePolicy && document.featurePolicy.allowsFeature){
+      parts.push('Permissions-Policy อนุญาตกล้อง (featurePolicy): ' + (document.featurePolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
+      parts.push('รายชื่อ feature ที่เปิดใช้ได้ทั้งหมด: ' + document.featurePolicy.allowedFeatures().join(', '));
+    } else if(document.permissionsPolicy && document.permissionsPolicy.allowsFeature){
+      parts.push('Permissions-Policy อนุญาตกล้อง (permissionsPolicy): ' + (document.permissionsPolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
+    } else {
+      parts.push('เบราว์เซอร์นี้ไม่รองรับการเช็ค featurePolicy โดยตรง (เช็คไม่ได้ล่วงหน้า)');
+    }
+  }catch(e){ parts.push('เช็ค featurePolicy ผิดพลาด: ' + e.message); }
+  if(navigator.permissions && navigator.permissions.query){
+    navigator.permissions.query({name:'camera'}).then(r=>{
+      el.innerHTML += '<br>สถานะสิทธิ์กล้อง (Permissions API): ' + r.state;
+    }).catch(e=>{ el.innerHTML += '<br>เช็คสถานะสิทธิ์กล้องไม่ได้: ' + e.message; });
+  }
+  el.innerHTML = parts.join('<br>');
+})();
 </script>
 </body>
 </html>
