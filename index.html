@@ -68,10 +68,10 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
   <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
 
   <div class="stage" id="stage">
-    <div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>
+    <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
   </div>
 
-  <div id="controls"></div>
+  <div id="controls"><button class="btn btn-primary" id="btnOpenCam">📷 แตะเพื่อเปิดกล้อง</button></div>
   <div id="resultCard"></div>
 
   <p class="note">🔒 ภาพและข้อมูลประมวลผลอยู่ในเครื่องของคุณเท่านั้น ไม่ถูกส่งหรือเก็บไว้ที่เซิร์ฟเวอร์ใด ๆ</p>
@@ -201,7 +201,7 @@ function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-startCamera();
+document.getElementById('btnOpenCam').onclick = startCamera;
 </script>
 </body>
 </html>
