@@ -60,12 +60,25 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
 .copy-btn.copied{background:var(--primary); color:#fff; border-color:var(--primary);}
 .note{font-size:12px; color:var(--muted); line-height:1.6; margin-top:14px; display:flex; gap:7px;}
 .err{color:var(--danger); font-size:13px; margin-top:10px; line-height:1.5;}
+.review-title{font-size:14.5px; font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:7px;}
+.review-warn{
+  font-size:12.5px; color:#8a6508; background:#FFF6DC; border-radius:10px; padding:9px 12px;
+  margin-top:10px; line-height:1.6; display:flex; gap:7px;
+}
+.btn-row{display:flex; gap:8px;}
+.btn-row .btn{margin-top:0;}
+.sent-ok{
+  background:var(--primary-light); border:1px solid var(--primary); border-radius:14px;
+  padding:18px; margin-top:14px; text-align:center; color:var(--primary-dark);
+}
+.sent-ok .big{font-size:30px; margin-bottom:6px;}
+.sent-ok b{display:block; font-size:15px; margin-bottom:4px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>📷 สแกนสติกเกอร์ผู้ป่วย</h1>
-  <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
+  <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ ระบบ OCR อาจอ่านผิดเพี้ยนได้บ้าง โดยเฉพาะฟอนต์จากเครื่องพิมพ์ป้าย จึงจะมีหน้าตรวจสอบให้แก้ไขก่อนยืนยันเสมอ</p>
 
   <div class="stage" id="stage">
     <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
@@ -194,11 +207,19 @@ function copyField(id, btn){
   }
 }
 
+// หน้าตรวจสอบ/แก้ไขก่อนยืนยัน — OCR อาจอ่าน HN หรือชื่อผิดเพี้ยนได้ (โดยเฉพาะฟอนต์จากเครื่องพิมพ์ป้าย)
+// ผู้ใช้แก้ไขค่าในช่องได้อิสระก่อนกด "ยืนยันข้อมูลนี้" และยังกด "สแกนใหม่" ได้ทุกเมื่อถ้าภาพไม่ชัด
 function showResult(r){
-  setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
-  document.getElementById('btnRetry3').onclick = startCamera;
+  const hasOpener = !!(window.opener && !window.opener.closed);
+  setControls(`
+    <div class="btn-row">
+      <button class="btn btn-outline" id="btnRescan" style="flex:1;">🔄 สแกนใหม่</button>
+      <button class="btn btn-primary" id="btnConfirm" style="flex:1.4;">✅ ยืนยันข้อมูลนี้</button>
+    </div>
+  `);
   setResult(`
     <div class="card">
+      <div class="review-title">📝 ตรวจสอบข้อมูลก่อนยืนยัน</div>
       <div class="field">
         <label>HN</label>
         <div class="row">
@@ -213,8 +234,82 @@ function showResult(r){
           <button class="copy-btn" id="copyName">คัดลอก</button>
         </div>
       </div>
+      <div class="review-warn">⚠️ <span>ระบบ OCR อ่านข้อมูลจากภาพอัตโนมัติ อาจผิดเพี้ยนได้บ้าง กรุณาตรวจสอบกับสติกเกอร์จริงและแก้ไขให้ถูกต้องก่อนกด "ยืนยันข้อมูลนี้"</span></div>
     </div>
-    <p class="note">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>
+    <div id="afterConfirm"></div>
+    <p class="note" id="fallbackNote" style="${hasOpener ? 'display:none;' : ''}">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>
+  `);
+  document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
+  document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
+  document.getElementById('btnRescan').onclick = startCamera;
+  document.getElementById('btnConfirm').onclick = confirmResult;
+}
+
+// ผู้ใช้กด "ยืนยันข้อมูลนี้": ตรวจความครบถ้วนแบบเบื้องต้น แล้วส่งค่ากลับไปยังแท็บฟอร์มเดิม (ถ้าเปิดมาจากแท็บนั้น)
+// ผ่าน window.postMessage — ทำงานข้าม origin ได้ปกติ เพราะแท็บนี้ถูกเปิดด้วย window.open() จากฟอร์มเดิมโดยตรง
+function confirmResult(){
+  const hnEl = document.getElementById('outHN');
+  const nameEl = document.getElementById('outName');
+  const hn = hnEl.value.trim();
+  const name = nameEl.value.trim();
+
+  if(!hn){
+    hnEl.focus();
+    hnEl.style.borderColor = 'var(--danger)';
+    setResult(document.querySelector('.card').outerHTML + '<p class="err">กรุณากรอกเลข HN ก่อนกดยืนยัน (OCR อาจอ่านไม่พบเลข)</p>');
+    // ผูก event ใหม่ให้การ์ดที่ re-render (setResult เขียนทับ DOM เดิม)
+    document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
+    document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
+    return;
+  }
+
+  const hasOpener = !!(window.opener && !window.opener.closed);
+  if(hasOpener){
+    try{
+      window.opener.postMessage({ source:'patient-sticker-scanner', hn, name }, '*');
+      setControls('<button class="btn btn-outline" id="btnScanAgain">📷 สแกนคนไข้ถัดไป</button>');
+      document.getElementById('btnScanAgain').onclick = startCamera;
+      setResult(`
+        <div class="sent-ok">
+          <div class="big">✅</div>
+          <b>ส่งข้อมูลกลับไปยังฟอร์มเดิมแล้ว</b>
+          <div style="font-size:13px;">HN: ${escapeHtml(hn)}${name?(' · '+escapeHtml(name)):''}</div>
+          <div style="font-size:12.5px; margin-top:8px; opacity:.85;">กลับไปที่แท็บฟอร์มเดิมเพื่อตรวจสอบและทำแบบทดสอบต่อได้เลย คุณสามารถปิดแท็บนี้ หรือกด "สแกนคนไข้ถัดไป" เพื่อสแกนต่อ</div>
+        </div>
+      `);
+    }catch(e){
+      console.warn('postMessage failed', e);
+      // ส่งไม่สำเร็จ (เช่น แท็บต้นทางถูกปิดไปแล้ว) -> กลับไปโหมดคัดลอกด้วยมือ
+      showCopyFallback(hn, name);
+    }
+  }else{
+    showCopyFallback(hn, name);
+  }
+}
+
+// เผื่อกรณีเปิดหน้านี้ตรง ๆ โดยไม่ได้มาจากแท็บฟอร์ม (เช่น กด bookmark) จะไม่มี window.opener ให้ส่งข้อมูลกลับอัตโนมัติ
+// จึงกลับไปใช้วิธีคัดลอกด้วยมือแทน
+function showCopyFallback(hn, name){
+  setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
+  document.getElementById('btnRetry3').onclick = startCamera;
+  setResult(`
+    <div class="card">
+      <div class="field">
+        <label>HN</label>
+        <div class="row">
+          <input class="input" id="outHN" value="${escapeHtml(hn)}" inputmode="numeric">
+          <button class="copy-btn" id="copyHN">คัดลอก</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>ชื่อ-นามสกุล</label>
+        <div class="row">
+          <input class="input" id="outName" value="${escapeHtml(name)}">
+          <button class="copy-btn" id="copyName">คัดลอก</button>
+        </div>
+      </div>
+    </div>
+    <p class="note">ℹ️ หน้านี้ไม่ได้เปิดมาจากแท็บฟอร์มโดยตรง จึงส่งข้อมูลกลับอัตโนมัติไม่ได้ กรุณากด "คัดลอก" แต่ละช่อง แล้วสลับไปวางในฟอร์มเดิมด้วยตนเอง</p>
   `);
   document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
   document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
