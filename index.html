@@ -66,13 +66,12 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
 <div class="wrap">
   <h1>📷 สแกนสติกเกอร์ผู้ป่วย</h1>
   <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
-  <p id="diag" style="font-size:11.5px; color:var(--muted); background:var(--primary-light); padding:8px 10px; border-radius:8px; line-height:1.6;"></p>
 
   <div class="stage" id="stage">
-    <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
+    <div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>
   </div>
 
-  <div id="controls"><button class="btn btn-primary" id="btnOpenCam">📷 แตะเพื่อเปิดกล้อง</button></div>
+  <div id="controls"></div>
   <div id="resultCard"></div>
 
   <p class="note">🔒 ภาพและข้อมูลประมวลผลอยู่ในเครื่องของคุณเท่านั้น ไม่ถูกส่งหรือเก็บไว้ที่เซิร์ฟเวอร์ใด ๆ</p>
@@ -88,29 +87,14 @@ const resultCard = document.getElementById('resultCard');
 function setControls(html){ controls.innerHTML = html; }
 function setResult(html){ resultCard.innerHTML = html; }
 
-async function tryGetStream(constraintsList){
-  let lastErr = null;
-  for(const c of constraintsList){
-    try{ return await navigator.mediaDevices.getUserMedia(c); }
-    catch(e){ lastErr = e; console.warn('constraint failed', JSON.stringify(c), e.name, e.message); }
-  }
-  throw lastErr;
-}
 async function startCamera(){
   setResult('');
   stage.innerHTML = '<div class="state-msg" id="idleMsg">กำลังเปิดกล้อง...</div>';
   setControls('');
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    stage.innerHTML = '<div class="state-msg">เบราว์เซอร์นี้ไม่รองรับการเข้าถึงกล้อง (navigator.mediaDevices ไม่พร้อมใช้งาน)<br><span style="font-size:12px;opacity:.8">ลองเปิดผ่าน Chrome หรือ Safari เวอร์ชันล่าสุดโดยตรง ไม่ใช่ผ่านแอปอื่นที่ฝังเบราว์เซอร์ไว้ข้างใน</span></div>';
-    return;
-  }
   try{
-    // ไล่ลองเงื่อนไขจากเข้มงวด -> ยืดหยุ่นที่สุด เผื่อกล้อง/เบราว์เซอร์บางรุ่นปฏิเสธเงื่อนไขที่ระบุละเอียดเกินไป
-    stream = await tryGetStream([
-      { video:{ facingMode:{ exact:'environment' } }, audio:false },
-      { video:{ facingMode:'environment' }, audio:false },
-      { video:true, audio:false }
-    ]);
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ ideal:'environment' }, width:{ideal:1280}, height:{ideal:1280} }, audio:false
+    });
     stage.innerHTML = '<video id="video" playsinline autoplay muted></video><div class="frame"></div>';
     const v = document.getElementById('video');
     v.srcObject = stream;
@@ -118,16 +102,8 @@ async function startCamera(){
     setControls('<button class="btn btn-primary" id="btnShoot">📷 ถ่ายภาพ</button>');
     document.getElementById('btnShoot').onclick = capture;
   }catch(e){
-    console.warn('camera error', e && e.name, e && e.message, e);
-    const known = {
-      NotAllowedError: 'เบราว์เซอร์/ระบบปฏิเสธคำขอใช้กล้อง (สิทธิ์ถูกบล็อก)',
-      NotFoundError: 'ไม่พบอุปกรณ์กล้องในเครื่องนี้',
-      NotReadableError: 'กล้องถูกใช้งานโดยแอปอื่นอยู่ ลองปิดแอปกล้อง/แอปวิดีโอคอลอื่นก่อน',
-      OverconstrainedError: 'เงื่อนไขกล้องที่ขอไม่ตรงกับที่เครื่องรองรับ',
-      SecurityError: 'หน้านี้ไม่ได้อยู่ในบริบทที่ปลอดภัยพอสำหรับการใช้กล้อง (ต้องเป็น HTTPS)'
-    };
-    const label = (e && known[e.name]) || ((e && e.name) ? ('เกิดข้อผิดพลาด: '+e.name) : 'ไม่ทราบสาเหตุ');
-    stage.innerHTML = '<div class="state-msg">ไม่สามารถเปิดกล้องได้<br><span style="font-size:12.5px;opacity:.85">'+label+'</span><br><span style="font-size:11px;opacity:.6">'+((e&&e.message)||'')+'</span></div>';
+    console.warn('camera error', e);
+    stage.innerHTML = '<div class="state-msg">ไม่สามารถเปิดกล้องได้<br><span style="font-size:12.5px;opacity:.8">กรุณาอนุญาตการใช้กล้องเมื่อเบราว์เซอร์ถาม หรือตรวจสอบสิทธิ์กล้องในตั้งค่าเบราว์เซอร์</span></div>';
     setControls('<button class="btn btn-primary" id="btnRetry">ลองเปิดกล้องอีกครั้ง</button>');
     document.getElementById('btnRetry').onclick = startCamera;
   }
@@ -225,46 +201,7 @@ function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-document.getElementById('btnOpenCam').onclick = startCamera;
-
-// วินิจฉัยว่ามีนโยบาย Permissions-Policy ของเบราว์เซอร์/โฮสต์ ปิดกั้นกล้องไว้ที่ระดับเอกสารหรือไม่ (คนละชั้นกับสิทธิ์ที่ผู้ใช้กด)
-(function diagnose(){
-  const el = document.getElementById('diag');
-  const parts = [];
-  parts.push('URL: ' + location.protocol + '//' + location.host);
-  parts.push('มี mediaDevices: ' + (navigator.mediaDevices ? 'มี' : 'ไม่มี'));
-  try{
-    if(document.featurePolicy && document.featurePolicy.allowsFeature){
-      parts.push('Permissions-Policy อนุญาตกล้อง (featurePolicy): ' + (document.featurePolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
-      parts.push('รายชื่อ feature ที่เปิดใช้ได้ทั้งหมด: ' + document.featurePolicy.allowedFeatures().join(', '));
-    } else if(document.permissionsPolicy && document.permissionsPolicy.allowsFeature){
-      parts.push('Permissions-Policy อนุญาตกล้อง (permissionsPolicy): ' + (document.permissionsPolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
-    } else {
-      parts.push('เบราว์เซอร์นี้ไม่รองรับการเช็ค featurePolicy โดยตรง (เช็คไม่ได้ล่วงหน้า)');
-    }
-  }catch(e){ parts.push('เช็ค featurePolicy ผิดพลาด: ' + e.message); }
-  if(navigator.permissions && navigator.permissions.query){
-    navigator.permissions.query({name:'camera'}).then(r=>{
-      el.innerHTML += '<br>สถานะสิทธิ์กล้อง (Permissions API): ' + r.state;
-    }).catch(e=>{ el.innerHTML += '<br>เช็คสถานะสิทธิ์กล้องไม่ได้: ' + e.message; });
-  }
-  el.innerHTML = parts.join('<br>');
-
-  // เช็คว่าเบราว์เซอร์มองเห็น "อุปกรณ์กล้อง" จริงหรือไม่ (คนละเรื่องกับสิทธิ์การใช้งาน)
-  // หมายเหตุ: ก่อนที่ผู้ใช้จะอนุญาตกล้องครั้งแรก ป้ายชื่ออุปกรณ์ (label) มักจะว่างเปล่าตามมาตรฐานความเป็นส่วนตัวของเบราว์เซอร์ แต่จำนวนอุปกรณ์ videoinput จะยังนับได้ถูกต้อง
-  if(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices){
-    navigator.mediaDevices.enumerateDevices().then(list=>{
-      const cams = list.filter(d=>d.kind==='videoinput');
-      let msg = '<br>จำนวนอุปกรณ์กล้องที่เบราว์เซอร์มองเห็น: ' + cams.length;
-      if(cams.length===0){
-        msg += ' <span style="color:var(--danger,#D64545)">❌ เบราว์เซอร์นี้ไม่พบกล้องเลยแม้แต่ตัวเดียว — แปลว่าปัญหาไม่ได้อยู่ที่สิทธิ์เว็บ แต่กล้องถูกซ่อนไว้ที่ระดับระบบปฏิบัติการ/เบราว์เซอร์ หรือเครื่องนี้ไม่มีกล้อง</span>';
-      } else {
-        msg += cams.map((c,i)=>'<br>&nbsp;&nbsp;- กล้อง #'+(i+1)+': '+(c.label || '(ยังไม่มีชื่อ จนกว่าจะอนุญาตสิทธิ์)')).join('');
-      }
-      el.innerHTML += msg;
-    }).catch(e=>{ el.innerHTML += '<br>เช็ครายชื่ออุปกรณ์กล้องไม่ได้: ' + e.message; });
-  }
-})();
+startCamera();
 </script>
 </body>
 </html>
