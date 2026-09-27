@@ -164,13 +164,13 @@ function capture(){
   stopCamera();
   stage.innerHTML = '<img src="'+dataUrl+'">';
   setControls('<div class="state-msg" style="color:var(--ink);padding:14px 0 4px;"><div class="spinner" style="border-color:var(--line);border-top-color:var(--primary);"></div>กำลังอ่านข้อมูล...</div>');
-  readSticker(dataUrl);
+  readSticker(dataUrl, canvas.width);
 }
 
-async function readSticker(dataUrl){
+async function readSticker(dataUrl, imgWidth){
   try{
     const { data } = await Tesseract.recognize(dataUrl, 'tha+eng');
-    const parsed = parseStickerText(data && data.text || '');
+    const parsed = parseStickerData(data, imgWidth);
     // ปกติ handshake จากหน้าฟอร์มจะมาถึงไวมากตั้งแต่ก่อนถ่ายภาพเสร็จอยู่แล้ว แต่กันเหนียวรออีกนิด (สูงสุด 1.5 วิ)
     // เผื่อกรณีเพิ่งเปิดแท็บมาแล้วรีบถ่ายภาพจนรอบ ping แรกยังมาไม่ถึงตอนนี้พอดี
     const canSendBack = await waitForReturnChannel(1500);
@@ -182,19 +182,73 @@ async function readSticker(dataUrl){
   }
 }
 
-function parseStickerText(raw){
+// สติกเกอร์ผู้ป่วยมีเลย์เอาต์ตายตัว: HN อยู่บรรทัดบนสุดฝั่งขวา (ขึ้นต้นด้วย 0 เช่น 000665851) และชื่อ-นามสกุล
+// (มีคำนำหน้าเช่น นาง/นาย/เด็กหญิง/เด็กชาย) อยู่บรรทัดถัดมาฝั่งขวาเช่นกัน — ใช้ตำแหน่ง (bbox) จาก OCR ช่วยแยกฝั่งขวา
+// ออกจากข้อมูลฝั่งซ้าย (เช่น บาร์โค้ด/เลขอื่นๆ ที่ไม่ใช่ HN) แทนการไล่หาทั้งภาพแบบเดิม ซึ่งแม่นยำกว่ามาก
+function parseStickerData(data, imgWidth){
+  const titleRe = /(นางสาว|น\.ส\.|นาย|นาง|ด\.?ช\.?|ด\.?ญ\.?|คุณ|พระ|สามเณร|แม่ชี)/;
+
+  // ดึงรายการ "บรรทัด" พร้อมตำแหน่ง (bbox) จากโครงสร้างผลลัพธ์ของ Tesseract (blocks -> paragraphs -> lines)
+  let lines = [];
+  try{
+    (data.blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{ if(l && l.bbox && (l.text||'').trim()) lines.push(l); })));
+  }catch(e){}
+  if(!lines.length && Array.isArray(data.lines)){
+    lines = data.lines.filter(l=> l && l.bbox && (l.text||'').trim());
+  }
+
+  let hn = '', name = '';
+
+  if(lines.length && imgWidth){
+    // เผื่อบรรทัดเริ่มเลยกึ่งกลางภาพไปทางขวานิดหน่อย ไม่ต้องเป๊ะ 50% พอดี (สติกเกอร์จริงมักแบ่งซ้าย-ขวาไม่เท่ากัน)
+    const rightThreshold = imgWidth * 0.38;
+    const rightLines = lines
+      .filter(l => l.bbox.x0 >= rightThreshold)
+      .sort((a,b)=> a.bbox.y0 - b.bbox.y0); // เรียงบนลงล่างตามตำแหน่งจริงบนภาพ ไม่ใช่ตามลำดับที่ OCR อ่านเจอ
+
+    // HN: ไล่หาในบรรทัดขวาบนสุดๆ ก่อน (2-3 บรรทัดแรก) เอาเฉพาะกลุ่มตัวเลขที่ขึ้นต้นด้วย 0 และยาว >= 6 หลัก
+    for(const l of rightLines.slice(0, 3)){
+      const tokens = (l.text||'').split(/\s+/).map(t=>t.replace(/[^\d]/g,'')).filter(Boolean);
+      const hnToken = tokens.find(t=> t.length>=6 && t.charAt(0)==='0') || tokens.find(t=> t.length>=6);
+      if(hnToken){ hn = hnToken; break; }
+    }
+
+    // ชื่อ: ไล่หาในบรรทัดขวาที่มีคำนำหน้าชื่อ (ปกติคือบรรทัดถัดจาก HN)
+    for(const l of rightLines){
+      const t = l.text||'';
+      if(titleRe.test(t) && /[ก-๙]/.test(t)){
+        // ตัดข้อความตั้งแต่ตัวเลขตัวแรกทิ้งก่อน (สติกเกอร์มักมีรหัสอายุ เช่น "72ปี 0ด 21วัน" ต่อท้ายชื่อบนบรรทัดเดียวกัน
+        // และคำว่า "ปี"/"ด"/"วัน" เป็นอักษรไทยจริง กรองอักษรไทยเฉยๆ จะไม่ตัดออก ทำให้ชื่อเพี้ยนได้)
+        const beforeAgeCode = t.split(/[0-9]/)[0];
+        name = beforeAgeCode.replace(/[^\u0E01-\u0E4F\s.]/g,'').replace(/\s+/g,' ').trim();
+        if(name) break;
+      }
+    }
+  }
+
+  // สำรอง: ถ้าหา bbox ไม่ได้เลย (บาง build ของ Tesseract ไม่คืนโครงสร้าง blocks) หรือหาไม่เจอในฝั่งขวา
+  // ให้ไล่หาทั้งภาพแบบเดิม (ไม่แยกซ้าย-ขวา) เป็นทางสำรอง ดีกว่าไม่ได้อะไรเลย
+  if(!hn || !name){
+    const fallback = parseStickerTextFallback(data && data.text || '');
+    if(!hn) hn = fallback.hn;
+    if(!name) name = fallback.name;
+  }
+
+  return { hn, name };
+}
+
+// วิธีเดิม: ไล่หาทั้งภาพโดยไม่สนตำแหน่ง ใช้เป็นทางสำรองเมื่อไม่มีข้อมูล bbox หรือหาฝั่งขวาไม่เจอ
+function parseStickerTextFallback(raw){
   const lines = String(raw||'').split('\n').map(l=>l.trim()).filter(Boolean);
   let hn = '';
   for(const line of lines){
     const tokens = line.split(/\s+/).map(t=>t.replace(/[^\d]/g,'')).filter(t=>t.length>=6);
-    if(tokens.length){ hn = tokens[0]; break; }
+    if(tokens.length){ hn = tokens.find(t=>t.charAt(0)==='0') || tokens[0]; break; }
   }
   const titleRe = /(นางสาว|น\.ส\.|นาย|นาง|ด\.?ช\.?|ด\.?ญ\.?|คุณ|พระ|สามเณร|แม่ชี)/;
   let name = '';
   for(const line of lines){
     if(titleRe.test(line) && /[ก-๙]/.test(line)){
-      // ตัดข้อความตั้งแต่ตัวเลขตัวแรกทิ้งก่อน (สติกเกอร์มักมีรหัสอายุ เช่น "72ปี 0ด 21วัน" ต่อท้ายชื่อบนบรรทัดเดียวกัน
-      // และคำว่า "ปี"/"ด"/"วัน" เป็นอักษรไทยจริง กรองอักษรไทยเฉยๆ จะไม่ตัดออก ทำให้ชื่อเพี้ยนได้)
       const beforeAgeCode = line.split(/[0-9]/)[0];
       name = beforeAgeCode.replace(/[^\u0E01-\u0E4F\s.]/g,'').replace(/\s+/g,' ').trim();
       if(name) break;
