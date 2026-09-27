@@ -31,8 +31,7 @@ h1{font-size:19px; margin:2px 0 4px; display:flex; align-items:center; gap:8px;}
 .sub{font-size:13px; color:var(--muted); margin:0 0 16px; line-height:1.5;}
 .stage{
   background:#000; border-radius:16px; overflow:hidden; position:relative;
-  aspect-ratio:3/4; max-height:38vh; margin:0 auto;
-  display:flex; align-items:center; justify-content:center;
+  aspect-ratio:3/4; display:flex; align-items:center; justify-content:center;
 }
 .stage video, .stage canvas, .stage img{width:100%; height:100%; object-fit:cover; display:block;}
 .frame{position:absolute; inset:16% 7%; border:2.5px dashed rgba(255,255,255,.85); border-radius:12px; pointer-events:none;}
@@ -61,25 +60,16 @@ label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:5px; fo
 .copy-btn.copied{background:var(--primary); color:#fff; border-color:var(--primary);}
 .note{font-size:12px; color:var(--muted); line-height:1.6; margin-top:14px; display:flex; gap:7px;}
 .err{color:var(--danger); font-size:13px; margin-top:10px; line-height:1.5;}
-.review-title{font-size:14.5px; font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:7px;}
-.review-warn{
-  font-size:12.5px; color:#8a6508; background:#FFF6DC; border-radius:10px; padding:9px 12px;
-  margin-top:10px; line-height:1.6; display:flex; gap:7px;
-}
-.btn-row{display:flex; gap:8px;}
-.btn-row .btn{margin-top:0;}
-.sent-ok{
-  background:var(--primary-light); border:1px solid var(--primary); border-radius:14px;
-  padding:18px; margin-top:14px; text-align:center; color:var(--primary-dark);
-}
-.sent-ok .big{font-size:30px; margin-bottom:6px;}
-.sent-ok b{display:block; font-size:15px; margin-bottom:4px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>📷 สแกนสติกเกอร์ผู้ป่วย</h1>
-  <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ ระบบ OCR อาจอ่านผิดเพี้ยนได้บ้าง โดยเฉพาะฟอนต์จากเครื่องพิมพ์ป้าย จึงจะมีหน้าตรวจสอบให้แก้ไขก่อนยืนยันเสมอ</p>
+  <p class="sub">เปิดหน้านี้จะเรียกกล้องหลังของเครื่องทันที จัดกรอบให้เห็นเลข HN และบรรทัดชื่อ-สกุลชัดเจน ไม่เอียง ไม่มีเงา แล้วกดถ่ายภาพ</p>
+  <details style="margin-bottom:10px;">
+    <summary style="font-size:11.5px; color:var(--muted); cursor:pointer;">ข้อมูลเทคนิค (สำหรับตรวจสอบปัญหา)</summary>
+    <p id="diag" style="font-size:11.5px; color:var(--muted); background:var(--primary-light); padding:8px 10px; border-radius:8px; line-height:1.6; margin-top:6px;"></p>
+  </details>
 
   <div class="stage" id="stage">
     <div class="state-msg" id="idleMsg">แตะปุ่มด้านล่างเพื่อเปิดกล้อง</div>
@@ -186,7 +176,10 @@ function parseStickerText(raw){
   let name = '';
   for(const line of lines){
     if(titleRe.test(line) && /[ก-๙]/.test(line)){
-      name = line.replace(/[^\u0E01-\u0E4F\s.]/g,'').replace(/\s+/g,' ').trim();
+      // ตัดข้อความตั้งแต่ตัวเลขตัวแรกทิ้งก่อน (สติกเกอร์มักมีรหัสอายุ เช่น "72ปี 0ด 21วัน" ต่อท้ายชื่อบนบรรทัดเดียวกัน
+      // และคำว่า "ปี"/"ด"/"วัน" เป็นอักษรไทยจริง กรองอักษรไทยเฉยๆ จะไม่ตัดออก ทำให้ชื่อเพี้ยนได้)
+      const beforeAgeCode = line.split(/[0-9]/)[0];
+      name = beforeAgeCode.replace(/[^\u0E01-\u0E4F\s.]/g,'').replace(/\s+/g,' ').trim();
       if(name) break;
     }
   }
@@ -208,112 +201,68 @@ function copyField(id, btn){
   }
 }
 
-// หน้าตรวจสอบ/แก้ไขก่อนยืนยัน — OCR อาจอ่าน HN หรือชื่อผิดเพี้ยนได้ (โดยเฉพาะฟอนต์จากเครื่องพิมพ์ป้าย)
-// ผู้ใช้แก้ไขค่าในช่องได้อิสระก่อนกด "ยืนยันข้อมูลนี้" และยังกด "สแกนใหม่" ได้ทุกเมื่อถ้าภาพไม่ชัด
+// ตรวจว่าแท็บนี้ถูกเปิดมาจากอีกหน้าหนึ่งจริง (ผ่าน window.open) และหน้านั้นยังเปิดอยู่หรือไม่
+// (ถ้าผู้ใช้เข้าลิงก์นี้ตรงๆ เอง window.opener จะเป็น null — ให้ใช้วิธีคัดลอก/วางแทน)
+function hasValidOpener(){
+  try{ return !!(window.opener && !window.opener.closed); }catch(e){ return false; }
+}
+// หา origin ของหน้าที่เปิดแท็บนี้มา จาก document.referrer เพื่อระบุ targetOrigin ตอนส่ง postMessage กลับ
+// (ป้องกันไม่ให้ข้อมูลหลุดไปหน้าเว็บอื่นโดยไม่ตั้งใจ) — ถ้าหาไม่ได้ (เบราว์เซอร์บางตัวตัด referrer) ค่อย fallback เป็น '*'
+function openerTargetOrigin(){
+  try{ if(document.referrer) return new URL(document.referrer).origin; }catch(e){}
+  return '*';
+}
+function sendResultToOpener(hn, name){
+  if(!hasValidOpener()) return false;
+  try{
+    window.opener.postMessage({ source:'patient-sticker-scanner', hn, name }, openerTargetOrigin());
+    return true;
+  }catch(e){ console.warn('postMessage failed', e); return false; }
+}
 function showResult(r){
-  const hasOpener = !!(window.opener && !window.opener.closed);
-  setControls(`
-    <div class="btn-row">
-      <button class="btn btn-outline" id="btnRescan" style="flex:1;">🔄 สแกนใหม่</button>
-      <button class="btn btn-primary" id="btnConfirm" style="flex:1.4;">✅ ยืนยันข้อมูลนี้</button>
-    </div>
-  `);
+  setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
+  document.getElementById('btnRetry3').onclick = startCamera;
+  const canSendBack = hasValidOpener();
   setResult(`
     <div class="card">
-      <div class="review-title">📝 ตรวจสอบข้อมูลก่อนยืนยัน</div>
       <div class="field">
         <label>HN</label>
         <div class="row">
           <input class="input" id="outHN" value="${escapeHtml(r.hn)}" inputmode="numeric" placeholder="ไม่พบเลข HN กรุณาพิมพ์เอง">
-          <button class="copy-btn" id="copyHN">คัดลอก</button>
+          ${canSendBack ? '' : '<button class="copy-btn" id="copyHN">คัดลอก</button>'}
         </div>
       </div>
       <div class="field">
         <label>ชื่อ-นามสกุล</label>
         <div class="row">
           <input class="input" id="outName" value="${escapeHtml(r.name)}" placeholder="ไม่พบชื่อ กรุณาพิมพ์เอง">
-          <button class="copy-btn" id="copyName">คัดลอก</button>
+          ${canSendBack ? '' : '<button class="copy-btn" id="copyName">คัดลอก</button>'}
         </div>
       </div>
-      <div class="review-warn">⚠️ <span>ระบบ OCR อ่านข้อมูลจากภาพอัตโนมัติ อาจผิดเพี้ยนได้บ้าง กรุณาตรวจสอบกับสติกเกอร์จริงและแก้ไขให้ถูกต้องก่อนกด "ยืนยันข้อมูลนี้"</span></div>
     </div>
-    <div id="afterConfirm"></div>
-    <p class="note" id="fallbackNote" style="${hasOpener ? 'display:none;' : ''}">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>
+    ${canSendBack
+      ? '<button class="btn btn-primary" id="btnSendBack">✅ ใช้ข้อมูลนี้ (ส่งกลับไปหน้าฟอร์ม)</button><p class="note">ตรวจสอบให้ถูกต้องก่อนกดปุ่มด้านบน ระบบจะเติมค่าลงฟอร์มเดิมให้อัตโนมัติ แล้วปิดแท็บนี้</p>'
+      : '<p class="note">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>'}
   `);
-  document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
-  document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
-  document.getElementById('btnRescan').onclick = startCamera;
-  document.getElementById('btnConfirm').onclick = confirmResult;
-}
-
-// ผู้ใช้กด "ยืนยันข้อมูลนี้": ตรวจความครบถ้วนแบบเบื้องต้น แล้วส่งค่ากลับไปยังแท็บฟอร์มเดิม (ถ้าเปิดมาจากแท็บนั้น)
-// ผ่าน window.postMessage — ทำงานข้าม origin ได้ปกติ เพราะแท็บนี้ถูกเปิดด้วย window.open() จากฟอร์มเดิมโดยตรง
-function confirmResult(){
-  const hnEl = document.getElementById('outHN');
-  const nameEl = document.getElementById('outName');
-  const hn = hnEl.value.trim();
-  const name = nameEl.value.trim();
-
-  if(!hn){
-    hnEl.focus();
-    hnEl.style.borderColor = 'var(--danger)';
-    setResult(document.querySelector('.card').outerHTML + '<p class="err">กรุณากรอกเลข HN ก่อนกดยืนยัน (OCR อาจอ่านไม่พบเลข)</p>');
-    // ผูก event ใหม่ให้การ์ดที่ re-render (setResult เขียนทับ DOM เดิม)
+  if(canSendBack){
+    document.getElementById('btnSendBack').onclick = (e)=>{
+      const hn = document.getElementById('outHN').value.trim();
+      const name = document.getElementById('outName').value.trim();
+      if(!hn){ document.getElementById('outHN').focus(); return; }
+      const btn = e.target;
+      const sent = sendResultToOpener(hn, name);
+      if(!sent){ setResult(document.getElementById('resultCard').innerHTML + '<p class="err">ส่งข้อมูลกลับไม่สำเร็จ (แท็บต้นทางอาจถูกปิดไปแล้ว) กรุณาคัดลอกค่าไปวางเอง</p>'); return; }
+      btn.disabled = true; btn.textContent = 'ส่งข้อมูลแล้ว ✓ กำลังปิดแท็บนี้...';
+      setTimeout(()=>{
+        try{ window.close(); }catch(e){}
+        // เบราว์เซอร์บางตัวไม่ยอมปิดแท็บให้อัตโนมัติ (ขึ้นกับนโยบายความปลอดภัย) — ถ้ายังไม่ปิด ให้แจ้งผู้ใช้ปิดเอง
+        setTimeout(()=>{ btn.textContent = 'ส่งข้อมูลแล้ว ✓ ปิดแท็บนี้ได้เลย'; }, 400);
+      }, 900);
+    };
+  }else{
     document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
     document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
-    return;
   }
-
-  const hasOpener = !!(window.opener && !window.opener.closed);
-  if(hasOpener){
-    try{
-      window.opener.postMessage({ source:'patient-sticker-scanner', hn, name }, '*');
-      setControls('<button class="btn btn-outline" id="btnScanAgain">📷 สแกนคนไข้ถัดไป</button>');
-      document.getElementById('btnScanAgain').onclick = startCamera;
-      setResult(`
-        <div class="sent-ok">
-          <div class="big">✅</div>
-          <b>ส่งข้อมูลกลับไปยังฟอร์มเดิมแล้ว</b>
-          <div style="font-size:13px;">HN: ${escapeHtml(hn)}${name?(' · '+escapeHtml(name)):''}</div>
-          <div style="font-size:12.5px; margin-top:8px; opacity:.85;">กลับไปที่แท็บฟอร์มเดิมเพื่อตรวจสอบและทำแบบทดสอบต่อได้เลย คุณสามารถปิดแท็บนี้ หรือกด "สแกนคนไข้ถัดไป" เพื่อสแกนต่อ</div>
-        </div>
-      `);
-    }catch(e){
-      console.warn('postMessage failed', e);
-      // ส่งไม่สำเร็จ (เช่น แท็บต้นทางถูกปิดไปแล้ว) -> กลับไปโหมดคัดลอกด้วยมือ
-      showCopyFallback(hn, name);
-    }
-  }else{
-    showCopyFallback(hn, name);
-  }
-}
-
-// เผื่อกรณีเปิดหน้านี้ตรง ๆ โดยไม่ได้มาจากแท็บฟอร์ม (เช่น กด bookmark) จะไม่มี window.opener ให้ส่งข้อมูลกลับอัตโนมัติ
-// จึงกลับไปใช้วิธีคัดลอกด้วยมือแทน
-function showCopyFallback(hn, name){
-  setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
-  document.getElementById('btnRetry3').onclick = startCamera;
-  setResult(`
-    <div class="card">
-      <div class="field">
-        <label>HN</label>
-        <div class="row">
-          <input class="input" id="outHN" value="${escapeHtml(hn)}" inputmode="numeric">
-          <button class="copy-btn" id="copyHN">คัดลอก</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>ชื่อ-นามสกุล</label>
-        <div class="row">
-          <input class="input" id="outName" value="${escapeHtml(name)}">
-          <button class="copy-btn" id="copyName">คัดลอก</button>
-        </div>
-      </div>
-    </div>
-    <p class="note">ℹ️ หน้านี้ไม่ได้เปิดมาจากแท็บฟอร์มโดยตรง จึงส่งข้อมูลกลับอัตโนมัติไม่ได้ กรุณากด "คัดลอก" แต่ละช่อง แล้วสลับไปวางในฟอร์มเดิมด้วยตนเอง</p>
-  `);
-  document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
-  document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
 }
 
 function escapeHtml(s){
@@ -321,6 +270,30 @@ function escapeHtml(s){
 }
 
 document.getElementById('btnOpenCam').onclick = startCamera;
+
+// วินิจฉัยว่ามีนโยบาย Permissions-Policy ของเบราว์เซอร์/โฮสต์ ปิดกั้นกล้องไว้ที่ระดับเอกสารหรือไม่ (คนละชั้นกับสิทธิ์ที่ผู้ใช้กด)
+(function diagnose(){
+  const el = document.getElementById('diag');
+  const parts = [];
+  parts.push('URL: ' + location.protocol + '//' + location.host);
+  parts.push('มี mediaDevices: ' + (navigator.mediaDevices ? 'มี' : 'ไม่มี'));
+  try{
+    if(document.featurePolicy && document.featurePolicy.allowsFeature){
+      parts.push('Permissions-Policy อนุญาตกล้อง (featurePolicy): ' + (document.featurePolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
+      parts.push('รายชื่อ feature ที่เปิดใช้ได้ทั้งหมด: ' + document.featurePolicy.allowedFeatures().join(', '));
+    } else if(document.permissionsPolicy && document.permissionsPolicy.allowsFeature){
+      parts.push('Permissions-Policy อนุญาตกล้อง (permissionsPolicy): ' + (document.permissionsPolicy.allowsFeature('camera') ? '✅ อนุญาต' : '❌ ถูกบล็อก'));
+    } else {
+      parts.push('เบราว์เซอร์นี้ไม่รองรับการเช็ค featurePolicy โดยตรง (เช็คไม่ได้ล่วงหน้า)');
+    }
+  }catch(e){ parts.push('เช็ค featurePolicy ผิดพลาด: ' + e.message); }
+  if(navigator.permissions && navigator.permissions.query){
+    navigator.permissions.query({name:'camera'}).then(r=>{
+      el.innerHTML += '<br>สถานะสิทธิ์กล้อง (Permissions API): ' + r.state;
+    }).catch(e=>{ el.innerHTML += '<br>เช็คสถานะสิทธิ์กล้องไม่ได้: ' + e.message; });
+  }
+  el.innerHTML = parts.join('<br>');
+})();
 </script>
 </body>
 </html>
