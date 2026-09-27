@@ -3,18 +3,63 @@
 <head>
 <meta charset="UTF-8">
 <script>
-// หนีเบราว์เซอร์ในแอป LINE อัตโนมัติ (ดูคำอธิบายเต็มในไฟล์ js.html ของฟอร์มหลัก) — ทำเป็นสคริปต์แรกสุดของหน้า
-// เพื่อให้ทำงานก่อนที่หน้าจะเริ่มขอสิทธิ์กล้อง ลดโอกาสที่ผู้ใช้จะเจอ error กล้องใช้ไม่ได้ก่อนจะหนีออกไปสำเร็จ
-(function escapeLineInAppBrowser(){
+// หนีเบราว์เซอร์ในตัวแอปต่าง ๆ ให้มากที่สุดเท่าที่ทำได้จริง (ดูคำอธิบายเต็มในไฟล์ js.html ของฟอร์มหลัก)
+// ทำเป็นสคริปต์แรกสุดของหน้า เพื่อให้ทำงานก่อนที่หน้าจะเริ่มขอสิทธิ์กล้อง
+//
+// ข้อจำกัดที่ต้องรู้ไว้ตรง ๆ: มีแค่ LINE เท่านั้นที่เปิดช่องทางเป็นทางการให้เว็บสั่ง "หนีออกไปเบราว์เซอร์เริ่มต้น" ได้แบบ
+// การันตีผล 100% (ผ่านพารามิเตอร์ ?openExternalBrowser=1) ส่วนแอปอื่น (Facebook/Messenger, Instagram, Twitter/X, TikTok,
+// WeChat ฯลฯ) ไม่มีวิธีมาตรฐานแบบนี้ให้ใช้ — โดยเฉพาะบน iOS ที่ Apple ปิดกั้นไว้ระดับระบบ ไม่ให้เว็บสั่งออกจาก
+// WebView ของแอปอื่นได้เลยไม่ว่าจะเขียนโค้ดแบบไหนก็ตาม (เป็นข้อจำกัดของแพลตฟอร์ม แก้ด้วยโค้ดฝั่งเว็บไม่ได้จริง ๆ)
+// บน Android พอมีลูกเล่น "ลองยิง Intent ให้ระบบเปิดเบราว์เซอร์เริ่มต้นแทน" ซึ่งแอปดัง ๆ ส่วนใหญ่ยอมส่งต่อให้ระบบจัดการ
+// แต่ไม่การันตี 100% ทุกแอป — ถ้าใช้ไม่ได้ หน้าเว็บจะโหลดต่อตามปกติ (ไม่พัง) แล้วไปโชว่คำแนะนำแทนอัตโนมัติ (ดู showInAppBrowserGuide)
+(function escapeInAppBrowser(){
   try{
     const ua = navigator.userAgent || '';
-    if(!/\bLine\//i.test(ua)) return;
     const url = new URL(location.href);
-    if(url.searchParams.get('openExternalBrowser') === '1') return;
-    url.searchParams.set('openExternalBrowser', '1');
-    location.replace(url.toString());
-  }catch(e){ console.warn('escapeLineInAppBrowser failed', e); }
+    if(url.searchParams.get('openExternalBrowser') === '1') return; // กันวนซ้ำ
+
+    if(/\bLine\//i.test(ua)){
+      url.searchParams.set('openExternalBrowser', '1');
+      location.replace(url.toString());
+      return;
+    }
+
+    // เก็บผลตรวจไว้ให้ showInAppBrowserGuide() ใช้ต่อหลัง DOM พร้อม
+    window.__inAppBrowserDetected = /FBAN|FBAV|FB_IAB|Instagram|Twitter|musical_ly|MicroMessenger|Messenger/i.test(ua);
+
+    if(window.__inAppBrowserDetected && /Android/i.test(ua)){
+      // ยิง intent:// ผ่าน iframe ที่มองไม่เห็น (ไม่ใช่ location.replace ตรง ๆ) เพื่อไม่ให้หน้าปัจจุบันพัง/ค้าง
+      // ถ้าระบบไม่รู้จัก scheme นี้ (แอปต้นทางไม่รองรับ) — เบราว์เซอร์แค่เพิกเฉย หน้าเว็บยังใช้งานได้ตามปกติ
+      const intentUrl = 'intent://' + url.host + url.pathname + url.search + '#Intent;scheme=' + url.protocol.replace(':','') + ';end';
+      const ifr = document.createElement('iframe');
+      ifr.style.display = 'none';
+      ifr.src = intentUrl;
+      document.documentElement.appendChild(ifr);
+    }
+  }catch(e){ console.warn('escapeInAppBrowser failed', e); }
 })();
+
+// แสดงคำแนะนำ + ปุ่ม "คัดลอกลิงก์" เมื่อยังตรวจพบว่าอยู่ในเบราว์เซอร์ในตัวแอป (เช่น การยิง Intent บน Android ไม่สำเร็จ
+// หรือเป็น iOS ที่ทำอะไรไม่ได้เลยตั้งแต่ต้น) ให้ผู้ใช้ไปกดเปิดเองผ่านเมนู "•••" ของแอปนั้น ๆ ได้สะดวกขึ้น
+function showInAppBrowserGuide(){
+  if(!window.__inAppBrowserDetected) return;
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;background:#D64545;color:#fff;'
+    + 'padding:10px 14px;font-size:12.5px;line-height:1.6;display:flex;gap:10px;align-items:center;'
+    + 'flex-wrap:wrap;font-family:inherit;';
+  bar.innerHTML = '⚠️ กำลังเปิดผ่านเบราว์เซอร์ในตัวแอป กล้องอาจใช้งานไม่ได้ — แตะเมนู "•••" แล้วเลือก "เปิดใน Safari/Chrome" '
+    + 'หรือกดปุ่มด้านขวาเพื่อคัดลอกลิงก์ไปวางเอง'
+    + '<button id="__copyLinkBtn" style="margin-left:auto;flex-shrink:0;background:#fff;color:#D64545;border:none;'
+    + 'border-radius:8px;padding:7px 12px;font-weight:700;font-size:12px;cursor:pointer;">คัดลอกลิงก์</button>';
+  document.body.prepend(bar);
+  document.getElementById('__copyLinkBtn').onclick = async ()=>{
+    const btn = document.getElementById('__copyLinkBtn');
+    try{ await navigator.clipboard.writeText(location.href); btn.textContent = 'คัดลอกแล้ว ✓'; }
+    catch(e){ btn.textContent = 'คัดลอกไม่สำเร็จ'; }
+  };
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showInAppBrowserGuide);
+else showInAppBrowserGuide();
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>สแกนสติกเกอร์ผู้ป่วย</title>
