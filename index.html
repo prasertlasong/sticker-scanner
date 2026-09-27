@@ -2,6 +2,20 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
+<script>
+// หนีเบราว์เซอร์ในแอป LINE อัตโนมัติ (ดูคำอธิบายเต็มในไฟล์ js.html ของฟอร์มหลัก) — ทำเป็นสคริปต์แรกสุดของหน้า
+// เพื่อให้ทำงานก่อนที่หน้าจะเริ่มขอสิทธิ์กล้อง ลดโอกาสที่ผู้ใช้จะเจอ error กล้องใช้ไม่ได้ก่อนจะหนีออกไปสำเร็จ
+(function escapeLineInAppBrowser(){
+  try{
+    const ua = navigator.userAgent || '';
+    if(!/\bLine\//i.test(ua)) return;
+    const url = new URL(location.href);
+    if(url.searchParams.get('openExternalBrowser') === '1') return;
+    url.searchParams.set('openExternalBrowser', '1');
+    location.replace(url.toString());
+  }catch(e){ console.warn('escapeLineInAppBrowser failed', e); }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>สแกนสติกเกอร์ผู้ป่วย</title>
 <style>
