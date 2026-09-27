@@ -171,7 +171,10 @@ async function readSticker(dataUrl){
   try{
     const { data } = await Tesseract.recognize(dataUrl, 'tha+eng');
     const parsed = parseStickerText(data && data.text || '');
-    showResult(parsed);
+    // ปกติ handshake จากหน้าฟอร์มจะมาถึงไวมากตั้งแต่ก่อนถ่ายภาพเสร็จอยู่แล้ว แต่กันเหนียวรออีกนิด (สูงสุด 1.5 วิ)
+    // เผื่อกรณีเพิ่งเปิดแท็บมาแล้วรีบถ่ายภาพจนรอบ ping แรกยังมาไม่ถึงตอนนี้พอดี
+    const canSendBack = await waitForReturnChannel(1500);
+    showResult(parsed, canSendBack);
   }catch(e){
     console.warn('ocr error', e);
     setControls('<div class="err">อ่านข้อมูลจากภาพไม่สำเร็จ กรุณาลองถ่ายใหม่ให้ชัดขึ้น</div><button class="btn btn-outline" id="btnRetry2">ถ่ายใหม่</button>');
@@ -215,28 +218,74 @@ function copyField(id, btn){
   }
 }
 
-// ตรวจว่าแท็บนี้ถูกเปิดมาจากอีกหน้าหนึ่งจริง (ผ่าน window.open) และหน้านั้นยังเปิดอยู่หรือไม่
-// (ถ้าผู้ใช้เข้าลิงก์นี้ตรงๆ เอง window.opener จะเป็น null — ให้ใช้วิธีคัดลอก/วางแทน)
+// ---------- ช่องทางส่งข้อมูลกลับไปหน้าฟอร์มเดิม ----------
+// เดิมใช้วิธีเช็ค window.opener ล้วนๆ แต่บางเบราว์เซอร์/เว็บวิวบนมือถือทำให้ window.opener ของแท็บนี้
+// "หลุด" เป็น null ได้เอง (เช่น ระบบพักแท็บเดิมไว้เบื้องหลังจนรีโหลด) ทั้งที่จริงๆ สองแท็บยังส่งข้อความหากันได้ปกติ
+// จึงเพิ่มช่องทางที่แม่นยำกว่า: รอรับ "hello" จากหน้าฟอร์ม (ซึ่งถือ reference ของแท็บนี้จาก window.open() ไว้แน่นอน)
+// แล้วเก็บ event.source ของข้อความนั้นไว้ใช้ส่งข้อมูลกลับแทน — ไม่ต้องพึ่ง window.opener เลย
+let formWindowRef = null;   // เก็บ event.source จาก handshake ที่หน้าฟอร์มส่งมา
+let formOrigin = null;      // เก็บ origin จริงของหน้าฟอร์ม (จาก event.origin ของข้อความ ไม่ใช่ document.referrer ที่เชื่อถือได้น้อยกว่า)
+
+// หน้าฟอร์มจริง (js.html) ถูกซ้อนอยู่ใน iframe แบบ sandbox ของ Google Apps Script เสมอ ทำให้มี origin แบบ "opaque"
+// ซึ่งเบราว์เซอร์จะรายงานมาเป็นสตริง "null" ตรงๆ ใน event.origin — ค่านี้ใช้เป็น targetOrigin ตอนส่ง postMessage
+// กลับไม่ได้ (ไม่ใช่ '*', ไม่ใช่ '/', ไม่ใช่ URL ที่ parse ได้) เบราว์เซอร์จะโยน SyntaxError ทันทีถ้าเอาไปใช้ตรงๆ
+// จึงต้องแปลงเป็น '*' ในกรณีนี้โดยเฉพาะก่อนใช้เป็น targetOrigin เสมอ
+function safeTargetOrigin(origin){
+  if(!origin || origin === 'null') return '*';
+  return origin;
+}
+
+window.addEventListener('message', (ev)=>{
+  const d = ev.data;
+  if(!d || d.source !== 'patient-form' || d.type !== 'hello') return;
+  formWindowRef = ev.source;
+  formOrigin = ev.origin;
+  try{ ev.source.postMessage({ source:'patient-sticker-scanner', type:'ack' }, safeTargetOrigin(ev.origin)); }catch(e){ console.warn('ack postMessage failed', e); }
+});
+
+// ตรวจว่าแท็บนี้ถูกเปิดมาจากอีกหน้าหนึ่งจริง (ผ่าน window.open) และหน้านั้นยังเปิดอยู่หรือไม่ — ใช้เป็น fallback
+// สำรอง กรณี handshake ด้านบนยังไม่มา (เช่น เพิ่งเปิดแท็บ ยังไม่ทันครบรอบ ping แรก)
 function hasValidOpener(){
   try{ return !!(window.opener && !window.opener.closed); }catch(e){ return false; }
 }
-// หา origin ของหน้าที่เปิดแท็บนี้มา จาก document.referrer เพื่อระบุ targetOrigin ตอนส่ง postMessage กลับ
+function hasValidReturnChannel(){
+  return !!formWindowRef || hasValidOpener();
+}
+// รอ handshake จากหน้าฟอร์มสักครู่ (ปกติจะมาไวมากตั้งแต่ตอนเปิดแท็บ ก่อนถ่ายภาพ/OCR เสร็จนานมาก) ก่อนตัดสินใจ
+// ว่าจะเปิดโหมด auto-fill หรือโหมดคัดลอกเอง เพื่อลดโอกาสตัดสินใจเร็วเกินไปจนพลาด handshake ที่กำลังจะมาถึง
+function waitForReturnChannel(timeoutMs){
+  return new Promise(resolve=>{
+    if(hasValidReturnChannel()) return resolve(true);
+    const start = Date.now();
+    const iv = setInterval(()=>{
+      if(hasValidReturnChannel()){ clearInterval(iv); resolve(true); }
+      else if(Date.now() - start > timeoutMs){ clearInterval(iv); resolve(false); }
+    }, 100);
+  });
+}
+// หา origin ของหน้าที่เปิดแท็บนี้มา จาก document.referrer เพื่อระบุ targetOrigin ตอนส่ง postMessage กลับผ่าน window.opener
 // (ป้องกันไม่ให้ข้อมูลหลุดไปหน้าเว็บอื่นโดยไม่ตั้งใจ) — ถ้าหาไม่ได้ (เบราว์เซอร์บางตัวตัด referrer) ค่อย fallback เป็น '*'
 function openerTargetOrigin(){
   try{ if(document.referrer) return new URL(document.referrer).origin; }catch(e){}
   return '*';
 }
 function sendResultToOpener(hn, name){
-  if(!hasValidOpener()) return false;
-  try{
-    window.opener.postMessage({ source:'patient-sticker-scanner', hn, name }, openerTargetOrigin());
-    return true;
-  }catch(e){ console.warn('postMessage failed', e); return false; }
+  const payload = { source:'patient-sticker-scanner', hn, name };
+  // ทางหลัก: ส่งผ่าน reference ที่ได้จาก handshake — เชื่อถือได้มากกว่า window.opener
+  if(formWindowRef){
+    try{ formWindowRef.postMessage(payload, safeTargetOrigin(formOrigin)); return true; }
+    catch(e){ console.warn('postMessage via formWindowRef failed', e); }
+  }
+  // ทางสำรอง: ส่งผ่าน window.opener แบบเดิม
+  if(hasValidOpener()){
+    try{ window.opener.postMessage(payload, openerTargetOrigin()); return true; }
+    catch(e){ console.warn('postMessage via window.opener failed', e); }
+  }
+  return false;
 }
-function showResult(r){
+function showResult(r, canSendBack){
   setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
   document.getElementById('btnRetry3').onclick = startCamera;
-  const canSendBack = hasValidOpener();
   setResult(`
     <div class="card">
       <div class="field">
