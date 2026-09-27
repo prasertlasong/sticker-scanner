@@ -200,23 +200,28 @@ function parseStickerText(raw){
   return { hn, name };
 }
 
-function copyField(id, btn){
-  const el = document.getElementById(id);
-  const text = el.value;
-  const done = ()=>{
-    btn.textContent = 'คัดลอกแล้ว ✓';
-    btn.classList.add('copied');
-    setTimeout(()=>{ btn.textContent = 'คัดลอก'; btn.classList.remove('copied'); }, 1500);
-  };
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(done).catch(()=>{ el.select(); document.execCommand('copy'); done(); });
-  }else{
-    el.select(); document.execCommand('copy'); done();
-  }
+// คัดลอกข้อมูลไปคลิปบอร์ดแบบ "เงียบ" อัตโนมัติ (ไม่ต้องให้ผู้ใช้กดคัดลอกเอง) — ใช้เป็นทางสำรองเสมอ
+// เผื่อกรณีส่งกลับตรง (postMessage) ใช้ไม่ได้ เช่น ถูกแอป LINE โยนออกไปเบราว์เซอร์นอกจริง ๆ จนกลายเป็นคนละ
+// โปรเซสเบราว์เซอร์กับแท็บเดิม (window.opener หลุดไปเลย แก้ด้วยโค้ดฝั่งนี้ไม่ได้) หรือ iOS Safari ตัดการเชื่อมโยง opener เอง
+const CLIP_TAG = '##PATIENT-STICKER##';
+async function copyStickerDataToClipboard(hn, name){
+  const payload = CLIP_TAG + JSON.stringify({ source:'patient-sticker-scanner', hn, name });
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(payload);
+      return true;
+    }
+  }catch(e){ console.warn('clipboard write failed', e); }
+  try{ // สำรองแบบเก่าสุด กรณี Clipboard API ใช้ไม่ได้เลย
+    const ta = document.createElement('textarea');
+    ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    return true;
+  }catch(e){ console.warn('clipboard fallback failed', e); return false; }
 }
 
 // ตรวจว่าแท็บนี้ถูกเปิดมาจากอีกหน้าหนึ่งจริง (ผ่าน window.open) และหน้านั้นยังเปิดอยู่หรือไม่
-// (ถ้าผู้ใช้เข้าลิงก์นี้ตรงๆ เอง window.opener จะเป็น null — ให้ใช้วิธีคัดลอก/วางแทน)
+// (ถ้าผู้ใช้เข้าลิงก์นี้ตรงๆ เอง หรือถูกโยนออกไปเบราว์เซอร์นอกจนขาดการเชื่อมโยงกับแท็บเดิม window.opener จะใช้งานไม่ได้)
 function hasValidOpener(){
   try{ return !!(window.opener && !window.opener.closed); }catch(e){ return false; }
 }
@@ -233,50 +238,51 @@ function sendResultToOpener(hn, name){
     return true;
   }catch(e){ console.warn('postMessage failed', e); return false; }
 }
+
 function showResult(r){
   setControls('<button class="btn btn-outline" id="btnRetry3">ถ่ายใหม่</button>');
   document.getElementById('btnRetry3').onclick = startCamera;
-  const canSendBack = hasValidOpener();
   setResult(`
     <div class="card">
       <div class="field">
         <label>HN</label>
         <div class="row">
           <input class="input" id="outHN" value="${escapeHtml(r.hn)}" inputmode="numeric" placeholder="ไม่พบเลข HN กรุณาพิมพ์เอง">
-          ${canSendBack ? '' : '<button class="copy-btn" id="copyHN">คัดลอก</button>'}
         </div>
       </div>
       <div class="field">
         <label>ชื่อ-นามสกุล</label>
         <div class="row">
           <input class="input" id="outName" value="${escapeHtml(r.name)}" placeholder="ไม่พบชื่อ กรุณาพิมพ์เอง">
-          ${canSendBack ? '' : '<button class="copy-btn" id="copyName">คัดลอก</button>'}
         </div>
       </div>
     </div>
-    ${canSendBack
-      ? '<button class="btn btn-primary" id="btnSendBack">✅ ใช้ข้อมูลนี้ (ส่งกลับไปหน้าฟอร์ม)</button><p class="note">ตรวจสอบให้ถูกต้องก่อนกดปุ่มด้านบน ระบบจะเติมค่าลงฟอร์มเดิมให้อัตโนมัติ แล้วปิดแท็บนี้</p>'
-      : '<p class="note">✅ ตรวจสอบให้ถูกต้องก่อน แล้วกด "คัดลอก" แต่ละช่อง สลับไปแท็บฟอร์มเดิมแล้ววางในช่อง HN และชื่อ-นามสกุลได้เลย</p>'}
+    <button class="btn btn-primary" id="btnSendBack">✅ ใช้ข้อมูลนี้</button>
+    <p class="note" id="sendBackNote">ตรวจสอบให้ถูกต้องก่อนกดปุ่มด้านบน ระบบจะพยายามเติมค่าลงฟอร์มเดิมให้อัตโนมัติแล้วปิดแท็บนี้ให้เอง ถ้าทำไม่ได้ (เช่น เปิดผ่านแอป LINE) จะคัดลอกข้อมูลไว้ในคลิปบอร์ดให้แทนโดยอัตโนมัติ</p>
   `);
-  if(canSendBack){
-    document.getElementById('btnSendBack').onclick = (e)=>{
-      const hn = document.getElementById('outHN').value.trim();
-      const name = document.getElementById('outName').value.trim();
-      if(!hn){ document.getElementById('outHN').focus(); return; }
-      const btn = e.target;
-      const sent = sendResultToOpener(hn, name);
-      if(!sent){ setResult(document.getElementById('resultCard').innerHTML + '<p class="err">ส่งข้อมูลกลับไม่สำเร็จ (แท็บต้นทางอาจถูกปิดไปแล้ว) กรุณาคัดลอกค่าไปวางเอง</p>'); return; }
-      btn.disabled = true; btn.textContent = 'ส่งข้อมูลแล้ว ✓ กำลังปิดแท็บนี้...';
+  document.getElementById('btnSendBack').onclick = async (e)=>{
+    const hn = document.getElementById('outHN').value.trim();
+    const name = document.getElementById('outName').value.trim();
+    if(!hn){ document.getElementById('outHN').focus(); return; }
+    const btn = e.target;
+    btn.disabled = true;
+    if(sendResultToOpener(hn, name)){
+      btn.textContent = 'ส่งข้อมูลแล้ว ✓ กำลังปิดแท็บนี้...';
       setTimeout(()=>{
-        try{ window.close(); }catch(e){}
+        try{ window.close(); }catch(err){}
         // เบราว์เซอร์บางตัวไม่ยอมปิดแท็บให้อัตโนมัติ (ขึ้นกับนโยบายความปลอดภัย) — ถ้ายังไม่ปิด ให้แจ้งผู้ใช้ปิดเอง
         setTimeout(()=>{ btn.textContent = 'ส่งข้อมูลแล้ว ✓ ปิดแท็บนี้ได้เลย'; }, 400);
-      }, 900);
-    };
-  }else{
-    document.getElementById('copyHN').onclick = (e)=>copyField('outHN', e.target);
-    document.getElementById('copyName').onclick = (e)=>copyField('outName', e.target);
-  }
+      }, 700);
+      return;
+    }
+    // ส่งตรงไม่สำเร็จ (ไม่มี opener ที่ใช้งานได้ เช่น ถูกแอป LINE โยนออกไปเบราว์เซอร์นอกจริง) — พึ่งคลิปบอร์ดแทน อัตโนมัติ ไม่ต้องให้ผู้ใช้กดคัดลอกเอง
+    const copied = await copyStickerDataToClipboard(hn, name);
+    btn.disabled = false;
+    btn.textContent = copied ? '📋 คัดลอกข้อมูลแล้ว ✓' : 'ใช้ข้อมูลนี้';
+    document.getElementById('sendBackNote').innerHTML = copied
+      ? '✅ คัดลอกข้อมูลไว้ในคลิปบอร์ดให้แล้วโดยอัตโนมัติ สลับกลับไปหน้าฟอร์มเดิม (หรือแอป LINE) แล้วกดปุ่ม "📋 วางข้อมูลจากคลิปบอร์ด" จากนั้นปิดแท็บนี้ได้เลย'
+      : '⚠️ คัดลอกอัตโนมัติไม่สำเร็จ (เบราว์เซอร์นี้ไม่อนุญาต) กรุณาแตะเลือกข้อความในช่องด้านบนแล้วคัดลอกด้วยตนเอง แล้วไปวางในฟอร์มเดิม';
+  };
 }
 
 function escapeHtml(s){
